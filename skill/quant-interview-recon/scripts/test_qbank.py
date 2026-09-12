@@ -134,6 +134,13 @@ for bad in "●○■□▪▇▰▱◆★☆":
 print(f"  {'ok  ' if not any('unsafe glyph' in f for f in FAILED) else 'FAIL'} "
       f"no unsafe glyph is introduced by tex_safe")
 
+print("\nemoji and symbols (authored sections and forum text both carry them)")
+check("warning sign keeps a visible marker", tex_safe("\u26a0 careful"), "! careful")
+check("star becomes asterisk", tex_safe("\u2b50 top pick"), "* top pick")
+check("emoji are dropped, not left to tofu", tex_safe("nice \U0001F642 ok"), "nice  ok")
+check("variation selector is dropped", tex_safe("\u26a0\ufe0f x"), "! x")
+check("CJK is untouched", tex_safe("\u6982\u7387\u9898"), "\u6982\u7387\u9898")
+
 print()
 if FAILED:
     print(f"{len(FAILED)} FAILED: {FAILED}")

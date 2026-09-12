@@ -499,7 +499,27 @@ _GLYPH_FALLBACK = str.maketrans({
     "\u25cf": "\u2022", "\u25cb": "o", "\u25a0": "\u2022", "\u25a1": "[ ]",
     "\u25aa": "\u2022", "\u2587": "\u2022", "\u25b0": "\u2022", "\u25b1": "\u2022",
     "\u25c6": "\u2022", "\u2605": "*", "\u2606": "*", "\u2588": "\u2022",
+    # Symbols that carry meaning, so they get a spelled equivalent rather than
+    # being dropped: a warning marker that silently vanishes is worse than an
+    # ugly one.
+    "\u26a0": "!", "\u2b50": "*", "\u2714": "v", "\u2713": "v", "\u2717": "x",
+    "\u2718": "x", "\u2705": "v", "\u274c": "x", "\u27a1": "->", "\u2b05": "<-",
 })
+
+# Emoji and pictographs. Neither PingFang nor Helvetica has them, and forum
+# text (and our own authored sections) is full of them. Anything still
+# unmapped after _GLYPH_FALLBACK gets dropped rather than left to tofu.
+_EMOJI_RE = re.compile(
+    "[" 
+    "\U0001F000-\U0001FAFF"   # emoji blocks
+    "\U00002600-\U000027BF"   # misc symbols & dingbats
+    "\U0001F1E6-\U0001F1FF"   # regional indicators
+    "\U00002190-\U000021FF"   # arrows not already mapped
+    "\U0000FE00-\U0000FE0F"   # variation selectors
+    "\U0000200D"               # zero-width joiner
+    "\U00002B00-\U00002BFF"   # misc symbols and arrows
+    "]+"
+)
 
 
 def tex_safe(s: str) -> str:
@@ -517,6 +537,7 @@ def tex_safe(s: str) -> str:
     s = s.replace("\r\n", "\n").replace("\r", "\n")
     # Arrows/dashes that PingFang+Helvetica render as tofu boxes.
     s = s.translate(_GLYPH_FALLBACK)
+    s = _EMOJI_RE.sub("", s)
     # JSON escape leakage from scraped payloads: a literal backslash-n that is
     # not the start of a real command (\nu, \neq). LaTeX reads it as an
     # undefined control sequence and aborts the whole document.
@@ -585,6 +606,7 @@ def _section_safe(md: str) -> str:
     touched: JSON-escape leakage and tofu glyphs.
     """
     md = md.translate(_GLYPH_FALLBACK)
+    md = _EMOJI_RE.sub("", md)
     md = re.sub(r"\\([ntr])(?![a-z])", " ", md)
     md = re.sub(r"\\{2,}(?=[%$&#_{}~^])", "\\\\", md)
     return md
