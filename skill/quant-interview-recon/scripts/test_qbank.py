@@ -141,6 +141,12 @@ check("emoji are dropped, not left to tofu", tex_safe("nice \U0001F642 ok"), "ni
 check("variation selector is dropped", tex_safe("\u26a0\ufe0f x"), "! x")
 check("CJK is untouched", tex_safe("\u6982\u7387\u9898"), "\u6982\u7387\u9898")
 
+print("\ngreek and math symbols (they carry meaning, so promote not drop)")
+check("lambda becomes math", tex_safe("\u03bb = 0.183"), "$\\lambda$ = 0.183")
+check("stranded combining accent is dropped", tex_safe("\u03bb\u0302 = 0.183"), "$\\lambda$ = 0.183")
+check("geq becomes math", tex_safe("\u22652 sources"), "$\\geq$2 sources")
+check("existing math span is left alone", tex_safe("$P(\\lambda>1)$ holds"), "$P(\\lambda>1)$ holds")
+
 print()
 if FAILED:
     print(f"{len(FAILED)} FAILED: {FAILED}")

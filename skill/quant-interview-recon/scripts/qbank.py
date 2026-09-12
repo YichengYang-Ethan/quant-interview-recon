@@ -522,6 +522,37 @@ _EMOJI_RE = re.compile(
 )
 
 
+# Greek and math symbols turn up in ordinary prose here ("λ̂ = 0.183", "≥2
+# sources"). The text fonts have no glyph, so they tofu. They carry meaning, so
+# they are promoted into math rather than dropped. newunicodechar would be the
+# tidy fix but it is not in every TeX install, and a missing .sty aborts the
+# build — so this is done in Python.
+_MATHIFY = {
+    "λ": r"\lambda", "μ": r"\mu", "σ": r"\sigma", "α": r"\alpha", "β": r"\beta",
+    "γ": r"\gamma", "δ": r"\delta", "θ": r"\theta", "ρ": r"\rho", "π": r"\pi",
+    "Δ": r"\Delta", "Σ": r"\Sigma", "Ω": r"\Omega", "φ": r"\phi", "ε": r"\epsilon",
+    "≥": r"\geq", "≤": r"\leq", "≠": r"\neq", "≈": r"\approx", "±": r"\pm",
+    "×": r"\times", "÷": r"\div", "∞": r"\infty", "∑": r"\sum", "∈": r"\in",
+    "∫": r"\int", "∂": r"\partial", "√": r"\surd", "∝": r"\propto",
+}
+_MATHIFY_RE = re.compile("[" + "".join(_MATHIFY) + "]")
+_COMBINING_RE = re.compile(r"[\u0300-\u036f]")
+
+
+def mathify_outside_math(s: str) -> str:
+    """
+    Promote bare Greek/math characters to $...$, leaving existing math spans
+    alone — wrapping a symbol that is already inside $...$ would nest the
+    delimiters and break the build.
+    """
+    parts = re.split(r"(\$[^$]*\$)", s)
+    for i, part in enumerate(parts):
+        if part.startswith("$") and part.endswith("$") and len(part) > 1:
+            continue  # already math
+        parts[i] = _MATHIFY_RE.sub(lambda m: f"${_MATHIFY[m.group(0)]}$", part)
+    return "".join(parts)
+
+
 def tex_safe(s: str) -> str:
     """
     Make text survive pandoc -> xelatex.
@@ -538,6 +569,10 @@ def tex_safe(s: str) -> str:
     # Arrows/dashes that PingFang+Helvetica render as tofu boxes.
     s = s.translate(_GLYPH_FALLBACK)
     s = _EMOJI_RE.sub("", s)
+    s = mathify_outside_math(s)
+    # A combining accent left stranded by the substitution above renders as a
+    # floating mark ("λ̂" -> "$\\lambda$̂"); drop it rather than show garbage.
+    s = _COMBINING_RE.sub("", s)
     # JSON escape leakage from scraped payloads: a literal backslash-n that is
     # not the start of a real command (\nu, \neq). LaTeX reads it as an
     # undefined control sequence and aborts the whole document.
@@ -607,6 +642,8 @@ def _section_safe(md: str) -> str:
     """
     md = md.translate(_GLYPH_FALLBACK)
     md = _EMOJI_RE.sub("", md)
+    md = mathify_outside_math(md)
+    md = _COMBINING_RE.sub("", md)
     md = re.sub(r"\\([ntr])(?![a-z])", " ", md)
     md = re.sub(r"\\{2,}(?=[%$&#_{}~^])", "\\\\", md)
     return md
@@ -871,9 +908,13 @@ def build_pdf(md_path: Path, pdf_path: Path) -> bool:
 
     # Retry once with everything fancy stripped — a broken LaTeX package should
     # never cost the user their PDF.
+    # Fallback drops only the optional header package, never the fonts — a
+    # silent downgrade to Computer Modern looks like a different document and
+    # is easy to miss.
     r = subprocess.run(
         ["pandoc", str(md_path), "-o", str(pdf_path), "--pdf-engine=xelatex",
-         "--toc", "-V", f"CJKmainfont={cjk}", "-V", "geometry:margin=2.2cm"],
+         "--toc", "-V", f"CJKmainfont={cjk}", "-V", f"mainfont={main}",
+         "-V", f"monofont={mono}", "-V", "geometry:margin=2.2cm"],
         capture_output=True, text=True,
     )
     header.unlink(missing_ok=True)
