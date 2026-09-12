@@ -205,16 +205,59 @@ _STOP = {
 }
 
 
+_ZH_NUM = {"零": "0", "一": "1", "两": "2", "二": "2", "三": "3", "四": "4", "五": "5",
+           "六": "6", "七": "7", "八": "8", "九": "9", "十": "10", "百": "100", "千": "1000"}
+
+# Spelled-out numbers are the usual form in English question text ("two heads
+# in a row"), so without this the numeric guard sees no numbers at all and
+# silently falls back to pure lexical matching — exactly the case it exists
+# to catch.
+_EN_NUM = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+    "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14",
+    "fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18",
+    "nineteen": "19", "twenty": "20", "thirty": "30", "forty": "40",
+    "fifty": "50", "sixty": "60", "seventy": "70", "eighty": "80",
+    "ninety": "90", "hundred": "100", "thousand": "1000", "million": "1000000",
+    "half": "0.5", "twice": "2", "double": "2", "triple": "3",
+}
+_EN_NUM_RE = re.compile(r"\b(" + "|".join(_EN_NUM) + r")\b")
+
+
+def numeric_slots(s: str) -> tuple:
+    """Ordered multiset of the numbers a question depends on."""
+    return tuple(sorted(re.findall(r"\d+(?:\.\d+)?", s or "")))
+
+
+def numbers_compatible(a: str, b: str) -> bool:
+    """
+    Two questions with different numbers are different questions. The only
+    tolerated case is one side having no numbers at all (a paraphrase that
+    dropped them), where lexical similarity has to carry the decision alone.
+    """
+    na, nb = numeric_slots(a), numeric_slots(b)
+    if not na or not nb:
+        return True
+    return na == nb
+
+
 def normalize_text(s: str) -> str:
     """Canonical form used for fuzzy comparison only — never shown to the user."""
     s = unicodedata.normalize("NFKC", s or "")
     s = s.translate(_PUNCT_MAP)
     s = s.lower()
     s = re.sub(r"https?://\S+", " ", s)
-    # Numbers are the #1 source of false negatives: forum posters change them
-    # deliberately under NDA ("a fair coin" vs "10 flips" vs "100 flips").
-    s = re.sub(r"\d+(\.\d+)?", "#", s)
-    s = re.sub(r"[^\w一-鿿#]+", " ", s)
+    # Chinese numerals must become Arabic before any numeric comparison, or
+    # "连续两次正面" and "two heads in a row" carry different slots.
+    for zh, ar in _ZH_NUM.items():
+        s = s.replace(zh, ar)
+    s = _EN_NUM_RE.sub(lambda m: _EN_NUM[m.group(1)], s)
+    # Numbers are NOT masked. Masking them merges "two heads in a row" (E=6)
+    # with "three heads in a row" (E=14) — measured at similarity 0.91 — and a
+    # bank that folds those together teaches a wrong answer while claiming
+    # corroboration for it. A duplicate entry is a far cheaper mistake.
+    s = re.sub(r"[^\w一-鿿]+", " ", s)
     toks = [t for t in s.split() if t and t not in _STOP]
     return " ".join(toks)
 
@@ -370,7 +413,7 @@ def merge_records(records: list[dict], threshold: float = 0.82) -> tuple[list[di
 
         # An explicit canonical_key is an assertion by the harvester that this
         # is a known named problem. Trust it over any lexical score.
-        if canon and canon in by_canon:
+        if canon and canon in by_canon and numbers_compatible(n, norms[by_canon[canon]]):
             i = by_canon[canon]
             trail.append({
                 "action": "merged",
@@ -392,6 +435,8 @@ def merge_records(records: list[dict], threshold: float = 0.82) -> tuple[list[di
                 and sr.get("url") != rec.get("source_url")
                 for sr in (merged[i].get("sources") or [])
             ):
+                continue
+            if not numbers_compatible(n, existing):
                 continue
             s = similarity(n, existing)
             # A cross-language match is being made through a translated gloss,
@@ -439,6 +484,18 @@ def merge_records(records: list[dict], threshold: float = 0.82) -> tuple[list[di
 # markdown rendering
 # --------------------------------------------------------------------------
 
+# Measured against PingFang SC + Helvetica Neue under xelatex: every glyph on
+# the left is missing from at least one weight, and renders as a tofu box.
+# Scraped questions do contain them, so they are folded here rather than only
+# being kept out of our own templates.
+_GLYPH_FALLBACK = str.maketrans({
+    "\u2192": "->", "\u2190": "<-", "\u21d2": "=>", "\u2194": "<->",
+    "\u25cf": "\u2022", "\u25cb": "o", "\u25a0": "\u2022", "\u25a1": "[ ]",
+    "\u25aa": "\u2022", "\u2587": "\u2022", "\u25b0": "\u2022", "\u25b1": "\u2022",
+    "\u25c6": "\u2022", "\u2605": "*", "\u2606": "*", "\u2588": "\u2022",
+})
+
+
 def tex_safe(s: str) -> str:
     """
     Make text survive pandoc -> xelatex.
@@ -453,7 +510,7 @@ def tex_safe(s: str) -> str:
         return ""
     s = s.replace("\r\n", "\n").replace("\r", "\n")
     # Arrows/dashes that PingFang+Helvetica render as tofu boxes.
-    s = s.translate(str.maketrans({"\u2192": "->", "\u2190": "<-", "\u21d2": "=>", "\u2194": "<->"}))
+    s = s.translate(_GLYPH_FALLBACK)
     # JSON escape leakage from scraped payloads: a literal backslash-n that is
     # not the start of a real command (\nu, \neq). LaTeX reads it as an
     # undefined control sequence and aborts the whole document.

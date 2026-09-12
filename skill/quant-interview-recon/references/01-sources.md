@@ -102,21 +102,57 @@ https://www.1point3acres.com/interview/problems/company/{slug}
 ✓ Question **titles are free** (61 catalogued for Optiver: 18 coding, 1 system
 design, 1 behavioral, 32 OJ). Bodies are gated.
 
+> **⚠ The UA rule is inverted here — re-verified 2026-09-12.** On `/interview/*`
+> a plain `curl/8.4.0` UA returns **200** and `Googlebot/2.1` returns **200**,
+> but a full desktop Chrome UA string returns **403**. Spoofing a browser to
+> "be polite" is exactly what breaks this endpoint. Send a plain UA.
+> (`/bbs/*` is the opposite: 403 to curl, Chrome-UA curl *and* Googlebot alike.)
+
 **Mechanism B — Chrome, for the 面经 threads.**
 
 ```
 https://www.1point3acres.com/bbs/tag/{slug}-{TAG_ID}-{page}.html
 ```
 ✓ `optiver-8331-1` → 505 主题 / 438 面经 / 26 pages. `janestreet-2069-1` → 280
-主题 / 215 面经. Find `TAG_ID` via `WebSearch site:1point3acres.com {company} 面经`.
+主题 / 215 面经. `Quant-9652-4` → 233 主题 / 12 pages. The trailing digit is the
+page and does paginate. Find `TAG_ID` via `WebSearch site:1point3acres.com
+{company} 面经`.
+
+> **⚠ The slug is cosmetic — only `TAG_ID` selects the tag.**
+> `/bbs/tag/optiver-1-1.html` returns **HTTP 200 serving tag id 1**, which is
+> 「录取汇报：研究生」 (157k grad-admission threads) — not Optiver. A wrong id
+> fails **silently, with plausible-looking content**. Always confirm the
+> rendered page header names the company you asked for.
 
 ```
 https://www.1point3acres.com/bbs/thread-{tid}-1-1.html
 ```
-✓ renders, but many threads show **需要積分 105–188** — see the 大米 rule below.
+✓ renders, but many threads show **需要積分 105–188**.
+
+**The gate leaks, and that is the highest-yield trick on this platform.**
+Three things stay readable on a gated thread:
+
+1. **Head and tail of the body.** The `[hide]` span is withheld but the text
+   around it is not. Observed on tid 1185510 as a guest:
+   *"You are playing a one-player game with two opaque boxes. At each turn, you
+   can choose to either 'place' or '"* `[GATE]` *"cumulative sum of your rolls
+   at any time but lose everything if you hit a square number 1, 4, 9, 16, ..."*
+2. **Every reply.** Replies are never points-gated and routinely reconstruct
+   the hidden question. On a gated Jane Street QR thread the replies gave
+   `play for 5-20 for first round, and at most 4 times re-play`, `从最大数字的机器
+   开始一个个turn on？`, `贝叶斯概率问题。` — enough to identify it as a Bayesian
+   optimal-stopping machine-selection game.
+3. **The structured metadata line** (年度 / 类别 / 全职-实习).
+
+So: on a gated thread, harvest the teaser, the metadata line, and all replies.
+Tag the record `gated-body` and **cap `confidence` at 3** — and if you had to
+reconstruct the question rather than read it, set `verbatim: false`. A
+reconstruction must never be citable later as a verbatim sighting.
 
 ✗ `/bbs/search.php?...` — guests get 「您所在的用户组(游客)无法进行此操作」. Dead.
-✗ `/interview/thread/{tid}` — guest sees title + one-line AI abstract only.
+✗ `/interview/thread/{tid}` — guest gets title + a one-line AI abstract; the
+body is rendered to a `<canvas>` with zero DOM text, so there is nothing to
+scrape even in Chrome.
 
 > **大米 rule.** Points-gated threads cost a balance the user earned. **Do not
 > unlock them.** Report thread + cost and let the user choose. (`06-chrome.md`)
@@ -224,6 +260,13 @@ user's Chrome, the JSON endpoints work:
 Prefer `javascript_tool` running `fetch(url, {credentials:"include"})` inside
 an open Reddit tab over navigating to the JSON URL — navigating dumps ~53 KB of
 raw JSON into context per query.
+
+> **⚠ Scrape the megathreads, not the post listing.** r/quant funnels interview
+> talk into *"Weekly Megathread: Education, Early Career and Hiring/Interview
+> Advice"*. A full year of `sort=new` search for "interview" returned only ~7
+> standalone posts, two of which **were** megathreads. Post-level scraping of
+> r/quant returns almost nothing; the content is in the megathread comment
+> trees. Fetch those with `{permalink}.json?limit=500&depth=8`.
 
 Heavily intern-skewed. Good for atmosphere, timelines, and TC; weak for verbatim questions.
 
