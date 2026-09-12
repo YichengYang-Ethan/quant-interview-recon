@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from qbank import (  # noqa: E402
-    classify_junk, merge_records, normalize_text, numbers_compatible,
+    _section_safe, classify_junk, merge_records, normalize_text, numbers_compatible,
     numeric_slots, similarity, tex_safe,
 )
 
@@ -144,8 +144,23 @@ check("CJK is untouched", tex_safe("\u6982\u7387\u9898"), "\u6982\u7387\u9898")
 print("\ngreek and math symbols (they carry meaning, so promote not drop)")
 check("lambda becomes math", tex_safe("\u03bb = 0.183"), "$\\lambda$ = 0.183")
 check("stranded combining accent is dropped", tex_safe("\u03bb\u0302 = 0.183"), "$\\lambda$ = 0.183")
-check("geq becomes math", tex_safe("\u22652 sources"), "$\\geq$2 sources")
+# The space before "2" is required: pandoc will not close a math span whose
+# closing "$" is followed by a digit.
+check("geq becomes math, separated from a following digit",
+      tex_safe("\u22652 sources"), "$\\geq$ 2 sources")
+check("times between digits does not swallow CJK",
+      tex_safe("2 \u9898\u00d73 \u5c0f\u95ee"), "2 \u9898$\\times$ 3 \u5c0f\u95ee")
 check("existing math span is left alone", tex_safe("$P(\\lambda>1)$ holds"), "$P(\\lambda>1)$ holds")
+
+print("\nmoney vs math (the CJK-swallowing bug)")
+# A bare "$" before a digit opens a math span that eats everything up to the
+# next "$", CJK included — and CJK has no glyph in a math font.
+check("money before CJK does not open math", tex_safe("\u57fa\u672c \u0024182,000 \u8d77"),
+      "\u57fa\u672c \\$182,000 \u8d77")
+check("money and a greek symbol coexist", tex_safe("\u0024182,000, \u03bb = 0.183"),
+      "\\$182,000, $\\lambda$ = 0.183")
+check("section bodies get the same guard",
+      "\\$182,000" in _section_safe("| pay | $182,000 | \u4e2d\u6587 |"), True)
 
 print()
 if FAILED:

@@ -550,7 +550,13 @@ def mathify_outside_math(s: str) -> str:
         if part.startswith("$") and part.endswith("$") and len(part) > 1:
             continue  # already math
         parts[i] = _MATHIFY_RE.sub(lambda m: f"${_MATHIFY[m.group(0)]}$", part)
-    return "".join(parts)
+    out = "".join(parts)
+    # Pandoc will not close a math span whose closing "$" is followed by a
+    # digit, so "$\\times$2" never closes and the span runs on to the next "$",
+    # swallowing everything between — CJK included, which then renders from a
+    # math font that has no CJK glyphs. Money is already escaped by this point,
+    # so any bare "$" before a digit here is a closing delimiter: separate it.
+    return re.sub(r"(?<!\\)\$(?=\d)", "$ ", out)
 
 
 def tex_safe(s: str) -> str:
@@ -566,6 +572,12 @@ def tex_safe(s: str) -> str:
     if not s:
         return ""
     s = s.replace("\r\n", "\n").replace("\r", "\n")
+    # A "$" immediately followed by a digit is money, never a math delimiter.
+    # Left bare it opens a math span that swallows everything up to the next
+    # "$" — including CJK, which then renders from a math font with no CJK
+    # glyphs. Must run FIRST, while a "$" can still only have come from the
+    # source: later steps inject their own "$" for math and would be caught.
+    s = re.sub(r"(?<!\\)\$(?=\d)", r"\\$", s)
     # Arrows/dashes that PingFang+Helvetica render as tofu boxes.
     s = s.translate(_GLYPH_FALLBACK)
     s = _EMOJI_RE.sub("", s)
@@ -642,6 +654,7 @@ def _section_safe(md: str) -> str:
     """
     md = md.translate(_GLYPH_FALLBACK)
     md = _EMOJI_RE.sub("", md)
+    md = re.sub(r"(?<!\\)\$(?=\d)", r"\\$", md)   # money, not math (see tex_safe)
     md = mathify_outside_math(md)
     md = _COMBINING_RE.sub("", md)
     md = re.sub(r"\\([ntr])(?![a-z])", " ", md)
