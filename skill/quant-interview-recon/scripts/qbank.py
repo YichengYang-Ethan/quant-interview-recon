@@ -576,6 +576,20 @@ def _short_host(url: str) -> str:
     return (m.group(1).replace("www.", "") if m else (url or "?"))[:38]
 
 
+def _section_safe(md: str) -> str:
+    """
+    Sanitize an authored markdown block without destroying its formatting.
+
+    tex_safe() is built for scraped question text and would mangle deliberate
+    markdown. Here only the two things that actually abort a LaTeX build are
+    touched: JSON-escape leakage and tofu glyphs.
+    """
+    md = md.translate(_GLYPH_FALLBACK)
+    md = re.sub(r"\\([ntr])(?![a-z])", " ", md)
+    md = re.sub(r"\\{2,}(?=[%$&#_{}~^])", "\\\\", md)
+    return md
+
+
 def render_markdown(run: dict, questions: list[dict], sources: list[dict], lang: str = "bi") -> str:
     company = run.get("company", "Unknown")
     role = run.get("role", "unknown")
@@ -701,6 +715,23 @@ def render_markdown(run: dict, questions: list[dict], sources: list[dict], lang:
                     L.append(f"<small>来源：{links}</small>")
                     L.append("")
                 L.append("")
+
+    # ---- free-form sections ----
+    # For a sparse-coverage firm the question count is the least useful part of
+    # the report: what wins the interview is firm intel, a pipeline guess, and
+    # the candidate's own story. run.json can carry those as markdown blocks so
+    # they land in the same PDF instead of a separate file the user loses.
+    for sec in run.get("sections", []):
+        title = sec.get("title", "").strip()
+        body = sec.get("body", "").strip()
+        if not (title or body):
+            continue
+        L.append(f"# {tex_safe(title)}")
+        L.append("")
+        # Section bodies are authored, not scraped: pass headings, tables and
+        # links through, and only defuse the characters that break LaTeX.
+        L.append(_section_safe(body))
+        L.append("")
 
     # ---- appendix: source ledger ----
     L.append("# 附录 A · 检索台账 / Source Ledger")
