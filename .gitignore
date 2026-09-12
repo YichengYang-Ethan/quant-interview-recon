@@ -1,0 +1,10 @@
+# Harvest output belongs to the user, not the repo — it contains their
+# company targets and can contain NDA-adjacent recollections.
+runs/
+out/
+*.pdf
+!docs/sample/*.pdf
+.pdf-header.tex
+__pycache__/
+*.pyc
+.DS_Store
