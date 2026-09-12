@@ -100,6 +100,25 @@ CONTENTLESS_RE = re.compile(
 
 MIN_QUESTION_CHARS = 12
 
+# Curated question banks assign one entry per problem by construction, so two
+# DIFFERENT entries from the same bank are two different problems however
+# similar the wording. QuantGuide ships deliberate near-twins ("Find the most
+# recent date..." vs "Find the next date...") that score 0.91 lexically and are
+# not the same question. Forums are excluded: the same recollection genuinely
+# does get posted twice there.
+CURATED_PLATFORMS = {
+    "quantguide", "puzzledquant", "openquant", "brainstellar", "quantquestions",
+    "quantinterview",
+}
+
+
+CROSS_LANG_SLACK = 0.10
+
+
+def _curated(platform: str) -> str | None:
+    p = (platform or "").lower().replace(".io", "").replace(".co", "").replace(" ", "")
+    return p if p in CURATED_PLATFORMS else None
+
 CJK_FONT_CANDIDATES = ["PingFang SC", "Heiti SC", "Songti SC", "Noto Sans CJK SC", "Hiragino Sans GB"]
 MAIN_FONT_CANDIDATES = ["Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"]
 MONO_FONT_CANDIDATES = ["Menlo", "Monaco", "DejaVu Sans Mono", "Courier New"]
@@ -364,12 +383,27 @@ def merge_records(records: list[dict], threshold: float = 0.82) -> tuple[list[di
             merged[i] = merge_pair(merged[i], rec)
             continue
 
-        best_i, best_s = -1, 0.0
+        cur = _curated(rec.get("source_platform", ""))
+        best_i, best_s, best_thr = -1, 0.0, threshold
         for i, existing in enumerate(norms):
+            # Same curated bank, different entry -> different problem. Skip.
+            if cur and any(
+                _curated(sr.get("platform", "")) == cur
+                and sr.get("url") != rec.get("source_url")
+                for sr in (merged[i].get("sources") or [])
+            ):
+                continue
             s = similarity(n, existing)
+            # A cross-language match is being made through a translated gloss,
+            # which is a paraphrase by nature. Holding it to the same lexical
+            # bar as two English posts is the wrong test: measured on a real
+            # pair, an accurate gloss scored 0.799 against the original.
+            thr = threshold
+            if rec.get("lang") != merged[i].get("lang"):
+                thr = threshold - CROSS_LANG_SLACK
             if s > best_s:
-                best_i, best_s = i, s
-        if best_s >= threshold and best_i >= 0:
+                best_i, best_s, best_thr = i, s, thr
+        if best_s >= best_thr and best_i >= 0:
             trail.append({
                 "action": "merged",
                 "basis": "lexical",
@@ -420,17 +454,43 @@ def tex_safe(s: str) -> str:
     s = s.replace("\r\n", "\n").replace("\r", "\n")
     # Arrows/dashes that PingFang+Helvetica render as tofu boxes.
     s = s.translate(str.maketrans({"\u2192": "->", "\u2190": "<-", "\u21d2": "=>", "\u2194": "<->"}))
+    # JSON escape leakage from scraped payloads: a literal backslash-n that is
+    # not the start of a real command (\nu, \neq). LaTeX reads it as an
+    # undefined control sequence and aborts the whole document.
+    # Real commands beginning \n \t \r are all lowercase (\nu, \neq, \nabla,
+    # \times, \theta, \rho, \right), so "not followed by a lowercase letter"
+    # cleanly separates leakage ("\nEach", "\n\n", "\t ") from real math.
+    s = re.sub(r"\\([ntr])(?![a-z])", " ", s)
+    # Double-unescaping upstream turns "\%" into "\\%". In LaTeX "\\" is a line
+    # break, so "\\%" is invalid wherever it lands and kills the build. A real
+    # "\\" is always followed by whitespace or "[", never by these specials.
+    s = re.sub(r"\\{2,}(?=[%$&#_{}~^])", "\\\\", s)
+
+    # Scraped payloads use LaTeX-native \( \) and \[ \] delimiters, but pandoc
+    # markdown only understands $ and $$. Passing them through unconverted
+    # makes pandoc emit them into a text context, where LaTeX rejects them as
+    # a "Bad math environment delimiter" and the whole build dies.
+    s = re.sub(r"\\\[(.+?)\\\]", r"$$\1$$", s, flags=re.S)
+    s = re.sub(r"\\\((.+?)\\\)", r"$\1$", s, flags=re.S)
+
     bare = len(re.findall(r"(?<!\\)\$", s))
     if bare % 2 == 1:
         s = re.sub(r"(?<!\\)\$", r"\\$", s)
     # A lone backslash that isn't starting a known escape breaks LaTeX.
-    s = re.sub(r"\\(?![\\$&%#_{}^~a-zA-Z])", r"\\textbackslash{}", s)
+    # \( \) \[ \] are legitimate math delimiters and scraped quant questions
+    # are full of them, so they must survive rather than be escaped into noise.
+    s = re.sub(r"\\(?![\\$&%#_{}^~()\[\]a-zA-Z])", r"\\textbackslash{}", s)
     return s
 
 
+# Glyph budget, measured against PingFang SC + Helvetica Neue with xelatex:
+# ● ○ ■ □ ▪ ▇ ▰ ▱ ◆ ★ ☆ are all missing from Helvetica Neue in at least one
+# weight (● survives roman and bold but NOT italic, which is exactly where a
+# meta line puts it). Only • and · render in every weight. So the report uses
+# a number for confidence and • for bars — no decorative glyph is worth a
+# page full of tofu boxes on someone else's machine.
 def _stars(n: int) -> str:
-    n = max(1, min(5, int(n or 3)))
-    return "●" * n + "○" * (5 - n)
+    return f"{max(1, min(5, int(n or 3)))}/5"
 
 
 def _conf_note(n: int, corroboration: int = 1) -> str:
@@ -491,7 +551,7 @@ def render_markdown(run: dict, questions: list[dict], sources: list[dict], lang:
         L.append(f"> **口径提醒**：{tex_safe(run['caveat'])}")
         L.append("")
 
-    L.append("**可信度标记**：`●●●●●` = 多源互证的一手回忆；`●●○○○` = 单一来源或年代较久，面试前请再交叉验证。"
+    L.append("**可信度标记**：`5/5` = 多源互证的一手回忆；`2/5` = 单一来源或年代较久，面试前请再交叉验证。"
              " 题目按 **轮次 / 类别** 两级编排；同一道题若在多个平台出现，已合并并列出全部来源。")
     L.append("")
 
@@ -513,7 +573,7 @@ def render_markdown(run: dict, questions: list[dict], sources: list[dict], lang:
         L.append("|---|---:|---:|---|")
         for cat, n in by_cat.most_common():
             pct = 100 * n // total if total else 0
-            L.append(f"| {tex_safe(cat)} | {n} | {pct}% | {'▇' * max(1, pct // 4)} |")
+            L.append(f"| {tex_safe(cat)} | {n} | {pct}% | {'•' * max(1, pct // 4)} |")
         L.append("")
         L.append("*备考时间应按这张表分配，而不是按你喜欢做哪类题。*")
         L.append("")
@@ -690,7 +750,8 @@ def build_pdf(md_path: Path, pdf_path: Path) -> bool:
         if r.returncode == 0 and pdf_path.exists():
             header.unlink(missing_ok=True)
             return True
-        last_err = (r.stderr or "")[-1500:]
+        if not last_err:
+            last_err = f"[{eng}] " + (r.stderr or "")[-1500:]
 
     # Retry once with everything fancy stripped — a broken LaTeX package should
     # never cost the user their PDF.
