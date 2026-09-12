@@ -232,14 +232,20 @@ def numeric_slots(s: str) -> tuple:
 
 def numbers_compatible(a: str, b: str) -> bool:
     """
-    Two questions with different numbers are different questions. The only
-    tolerated case is one side having no numbers at all (a paraphrase that
-    dropped them), where lexical similarity has to carry the decision alone.
+    Two questions whose numbers CONFLICT are different questions: "two heads in
+    a row" (E=6) is not "three heads in a row" (E=14), and 10 dice is not 100.
+
+    But one side merely having FEWER numbers is not a conflict — it is what a
+    truncation or a paraphrase looks like. A 一亩三分地 post cut off by a points
+    wall keeps "$1" and loses "100 turns"; it is still the same question as the
+    full text. So the test is subset, not equality.
     """
-    na, nb = numeric_slots(a), numeric_slots(b)
-    if not na or not nb:
+    from collections import Counter
+    ca, cb = Counter(numeric_slots(a)), Counter(numeric_slots(b))
+    if not ca or not cb:
         return True
-    return na == nb
+    small, large = (ca, cb) if sum(ca.values()) <= sum(cb.values()) else (cb, ca)
+    return all(large[k] >= v for k, v in small.items())
 
 
 def normalize_text(s: str) -> str:

@@ -297,8 +297,33 @@ Fully open, no login, no Cloudflare.
 ✓ https://www.quantguide.io/questions/{slug}    → free question bodies
 ✗ /questions?company=Optiver                    → 200 but byte-identical; the filter is client-side
 ```
-Parse the Next.js RSC flight payload in the HTML (`self.__next_f`), unescape
-`\"` → `"`, regex the question objects out.
+**Unescape it correctly — a naive `.replace('\\"', '"')` silently truncates
+questions.** The payload is triple-escaped: it lives inside a JS string
+literal, and question text contains its own quotes and `\$`. A blind replace
+corrupts the escaping and the regex stops at the first inner quote — "Place or
+Take" came back as 97 characters of its real 455, ending mid-sentence, with no
+error. Let `json.loads` do exactly one level:
+
+```python
+flight = []
+for m in re.finditer(r'self\.__next_f\.push\(\[\d+,\s*("(?:[^"\\]|\\.)*")\s*\]\)', html, re.S):
+    try: flight.append(json.loads(m.group(1)))   # one correct level of unescaping
+    except ValueError: pass
+blob = "".join(flight)                            # ~637 KB, normal JSON escaping
+for m in re.finditer(r'"prompt":"((?:[^"\\]|\\.)*)"', blob):
+    text = json.loads('"' + m.group(1) + '"')
+```
+
+Question objects in `blob` look like:
+
+```json
+{"id":"pjSCKiq39SvESirmwFq4","title":"Place or Take","difficulty":"hard",
+ "topic":"probability","isPremium":false,"companies":[{"company":"Jane Street"}],
+ "tags":[{"tag":"Games"},{"tag":"Expected Value"}],"urlEnding":"place-or-take"}
+```
+
+Counts verified 2026-09-12: 948 unique questions in the catalog; Jane Street
+tagged 133 (matching the site's own filter chip), of which 78 free / 55 premium.
 
 > **⚠ KaTeX digit corruption — the worst trap in this file.** Via WebFetch,
 > `$5$` renders as `555` and `$7$` as `777`. **Every numeric parameter would be

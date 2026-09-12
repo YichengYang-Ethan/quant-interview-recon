@@ -62,6 +62,23 @@ check("10 vs 100 dice stay separate", merged_count([
 ]), 2)
 check("spelled-out numbers become slots", numeric_slots(normalize_text("two heads in a row")), ("2",))
 check("chinese numerals become slots", numeric_slots(normalize_text("连续两次正面")), ("2",))
+# A points-walled 一亩三分地 post keeps "$1" and loses "100 turns"; it is still
+# the same question as the full QuantGuide text. Subset, not equality.
+check("a truncated quote still merges with the full text", merged_count([
+    rec("You are playing a one-player game with two opaque boxes. At each turn, you can choose to "
+        'either "place" or "take". "Place" places $1 from a third party into one box randomly. '
+        '"Take" empties out one box randomly and that money is yours. This game consists of 100 '
+        "turns where you must either place or take. Assuming optimal play, what is the expected "
+        "payoff of this game?",
+        "https://quantguide.io/questions/place-or-take", "QuantGuide", canonical_key="pot"),
+    rec('You are playing a one-player game with two opaque boxes. At each turn you can choose to either '
+        '"place" or "take". "Place" places $1 from a third pa',
+        "https://1point3acres.com/bbs/thread-1185510-1-1.html", "1point3acres", canonical_key="pot"),
+]), 1)
+check("but conflicting numbers still block a canonical_key merge", merged_count([
+    rec("Roll 10 dice, expected number of sixes?", "x1", "QuantGuide", canonical_key="dice"),
+    rec("Roll 100 dice, expected number of sixes?", "x2", "Glassdoor", canonical_key="dice"),
+]), 2)
 check("missing numbers on one side is tolerated",
       numbers_compatible("expect flip coin consecutive head", "expect flip coin 2 consecutive head"), True)
 
