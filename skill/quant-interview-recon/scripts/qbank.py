@@ -318,7 +318,7 @@ def classify_junk(rec: dict) -> str | None:
     for pat in SPAM_RE:
         if pat.search(q):
             return f"marketing/spam pattern: {pat.pattern}"
-    if not rec.get("source_url"):
+    if not rec.get("source_url") and not rec.get("first_party"):
         return "no source_url (unsourced questions are not admissible)"
     return None
 
@@ -346,6 +346,9 @@ def _coerce(rec: dict, run: dict) -> dict:
     out["lang"] = out.get("lang") or ("zh" if re.search(r"[一-鿿]", out["question"]) else "en")
     out["verbatim"] = bool(out.get("verbatim", True))
     out["source_platform"] = out.get("source_platform") or "unknown"
+    out["first_party"] = bool(out.get("first_party"))
+    if out["first_party"] and not out.get("source_url"):
+        out["source_url"] = ""
     out["question_en"] = (out.get("question_en") or "").strip() or None
     out["canonical_key"] = (out.get("canonical_key") or "").strip().lower() or None
     # A non-English record with no gloss can never cross-language-dedup. That is
@@ -362,7 +365,7 @@ def merge_pair(keep: dict, drop: dict) -> dict:
 
     def _src(r):
         return {
-            "url": r.get("source_url"),
+            "url": r.get("source_url") or None,
             "platform": r.get("source_platform"),
             "date": r.get("source_date"),
             "year": r.get("year"),
@@ -509,6 +512,15 @@ _GLYPH_FALLBACK = str.maketrans({
 # Emoji and pictographs. Neither PingFang nor Helvetica has them, and forum
 # text (and our own authored sections) is full of them. Anything still
 # unmapped after _GLYPH_FALLBACK gets dropped rather than left to tofu.
+# Circled numbers are common in Chinese technical writing (①②③ for enumerating
+# branches of a sequence) and are absent from both text fonts.
+_GLYPH_FALLBACK.update({
+    ord(c): f"({i})" for i, c in enumerate("①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳", start=1)
+})
+_GLYPH_FALLBACK.update({
+    ord(c): f"({i})" for i, c in enumerate("⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾", start=1)
+})
+
 _EMOJI_RE = re.compile(
     "[" 
     "\U0001F000-\U0001FAFF"   # emoji blocks
@@ -534,6 +546,10 @@ _MATHIFY = {
     "≥": r"\geq", "≤": r"\leq", "≠": r"\neq", "≈": r"\approx", "±": r"\pm",
     "×": r"\times", "÷": r"\div", "∞": r"\infty", "∑": r"\sum", "∈": r"\in",
     "∫": r"\int", "∂": r"\partial", "√": r"\surd", "∝": r"\propto",
+    # Logical connectives turn up in worked solutions ("odd product <=> both odd")
+    "⟺": r"\iff", "⟹": r"\implies", "⇔": r"\iff", "⇒": r"\implies",
+    "∀": r"\forall", "∃": r"\exists", "∪": r"\cup", "∩": r"\cap",
+    "⊂": r"\subset", "⊆": r"\subseteq", "∅": r"\emptyset", "≡": r"\equiv",
 }
 _MATHIFY_RE = re.compile("[" + "".join(_MATHIFY) + "]")
 _COMBINING_RE = re.compile(r"[\u0300-\u036f]")
@@ -781,7 +797,9 @@ def render_markdown(run: dict, questions: list[dict], sources: list[dict], lang:
                 srcs = q.get("sources") or [{"url": q.get("source_url"), "platform": q.get("source_platform")}]
                 links = ", ".join(
                     f"[{tex_safe(s.get('platform') or _short_host(s.get('url','')))}]({s.get('url')})"
-                    for s in srcs if s.get("url")
+                    if s.get("url")
+                    else tex_safe(s.get("platform") or "first-party")
+                    for s in srcs if s.get("url") or s.get("platform")
                 )
                 if links:
                     L.append(f"<small>来源：{links}</small>")
@@ -951,16 +969,23 @@ def build_pdf(md_path: Path, pdf_path: Path) -> bool:
 def cmd_init(a):
     out = Path(a.outdir).expanduser()
     (out / "raw").mkdir(parents=True, exist_ok=True)
+    # Re-running init must not destroy authored content. The pipeline notes,
+    # caveat and sections are written by hand and are often the most valuable
+    # part of a run; silently clobbering them on a second init is a trap.
+    prev = _read_json(out / "run.json", {})
     run = {
         "company": a.company,
         "role": a.role,
         "generated": _now(),
-        "created": _today(),
+        "created": prev.get("created") or _today(),
         "cycle": a.cycle,
-        "pipeline": [],
-        "caveat": "",
+        "pipeline": prev.get("pipeline", []),
+        "caveat": prev.get("caveat", ""),
+        "sections": prev.get("sections", []),
     }
     _write_json(out / "run.json", run)
+    if prev.get("sections") or prev.get("pipeline") or prev.get("caveat"):
+        print("  kept existing pipeline/caveat/sections from the previous run.json")
     if not (out / "raw" / "records.json").exists():
         _write_json(out / "raw" / "records.json", [])
     if not (out / "sources.json").exists():

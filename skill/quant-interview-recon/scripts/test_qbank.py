@@ -139,6 +139,7 @@ check("warning sign keeps a visible marker", tex_safe("\u26a0 careful"), "! care
 check("star becomes asterisk", tex_safe("\u2b50 top pick"), "* top pick")
 check("emoji are dropped, not left to tofu", tex_safe("nice \U0001F642 ok"), "nice  ok")
 check("variation selector is dropped", tex_safe("\u26a0\ufe0f x"), "! x")
+check("circled numbers become plain", tex_safe("\u2460a \u2461b"), "(1)a (2)b")
 check("CJK is untouched", tex_safe("\u6982\u7387\u9898"), "\u6982\u7387\u9898")
 
 print("\ngreek and math symbols (they carry meaning, so promote not drop)")
