@@ -678,6 +678,23 @@ def _section_safe(md: str) -> str:
     return md
 
 
+def _emit_sections(L: list, run: dict, where: str) -> None:
+    """Render authored run.json sections. `where` is "front" (default) or "back"."""
+    for sec in run.get("sections", []):
+        if sec.get("position", "front") != where:
+            continue
+        title = (sec.get("title") or "").strip()
+        body = (sec.get("body") or "").strip()
+        if not (title or body):
+            continue
+        L.append(f"# {tex_safe(title)}")
+        L.append("")
+        # Authored, not scraped: keep headings, tables and links; only defuse
+        # what actually breaks LaTeX.
+        L.append(_section_safe(body))
+        L.append("")
+
+
 def render_markdown(run: dict, questions: list[dict], sources: list[dict], lang: str = "bi") -> str:
     company = run.get("company", "Unknown")
     role = run.get("role", "unknown")
@@ -743,6 +760,12 @@ def render_markdown(run: dict, questions: list[dict], sources: list[dict], lang:
         L.append("*备考时间应按这张表分配，而不是按你喜欢做哪类题。*")
         L.append("")
 
+    # Authored sections are the synthesis — the firm dossier, the format
+    # breakdown, the plan. They are what the reader acts on, so they lead;
+    # the raw question list is reference material behind them. A section can
+    # opt out with {"position": "back"}.
+    _emit_sections(L, run, "front")
+
     # ---- the questions ----
     L.append("# 题目 / Questions")
     L.append("")
@@ -806,22 +829,7 @@ def render_markdown(run: dict, questions: list[dict], sources: list[dict], lang:
                     L.append("")
                 L.append("")
 
-    # ---- free-form sections ----
-    # For a sparse-coverage firm the question count is the least useful part of
-    # the report: what wins the interview is firm intel, a pipeline guess, and
-    # the candidate's own story. run.json can carry those as markdown blocks so
-    # they land in the same PDF instead of a separate file the user loses.
-    for sec in run.get("sections", []):
-        title = sec.get("title", "").strip()
-        body = sec.get("body", "").strip()
-        if not (title or body):
-            continue
-        L.append(f"# {tex_safe(title)}")
-        L.append("")
-        # Section bodies are authored, not scraped: pass headings, tables and
-        # links through, and only defuse the characters that break LaTeX.
-        L.append(_section_safe(body))
-        L.append("")
+    _emit_sections(L, run, 'back')
 
     # ---- appendix: source ledger ----
     L.append("# 附录 A · 检索台账 / Source Ledger")
